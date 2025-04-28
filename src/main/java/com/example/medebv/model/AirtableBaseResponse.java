@@ -1,17 +1,17 @@
-package com.example.medebv.request;
+package com.example.medebv.model;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class MedebvRequest {
+import java.util.List;
 
-	private String baseName;
-	//private String baseId;
-	
+@Data
+@NoArgsConstructor
+@Builder
+@AllArgsConstructor
+public class AirtableBaseResponse {
+
+    private List<Base> bases;
 }
