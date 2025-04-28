@@ -1,5 +1,8 @@
 package com.example.medebv.service.impl;
 
+import com.example.medebv.exception.MEDEBVCustomException;
+import com.example.medebv.model.AirtableBaseResponse;
+import com.example.medebv.model.Base;
 import com.example.medebv.request.MedebvRequest;
 import com.example.medebv.service.AirtableService;
 import lombok.RequiredArgsConstructor;
@@ -24,15 +27,12 @@ public class AirtableServiceImpl implements AirtableService {
     
    private MedebvRequest requets;
     
-    @Value("${airtable.table.url}")
+    @Value("${airtable.list.table.url}")
     private String airTableUrl;
-    
-//    @Value("${airtable.table.baseid}")
-//    private String baseId;
-//    
-//    @Value("${airtable.tablename}")
-//    private String tableName;
-    
+
+    @Value("${airtable.base.url}")
+    private String airTableBaseUrl;
+
     @Value("${airtable.token}")
     private String airtabletoken;
     
@@ -43,15 +43,40 @@ public class AirtableServiceImpl implements AirtableService {
         headers.setContentType(MediaType.APPLICATION_JSON);
         return headers;
     }
-	public ResponseEntity<String> getAllRecords(MedebvRequest requets) {
-        String url = airTableUrl + "/" + requets.getBaseId() + "/" + requets.getBaseName();
+	public ResponseEntity<String> getAllRecords(MedebvRequest requets) throws MEDEBVCustomException{
+        String airtablebaseName = requets.getBaseName();
+        String baseId= getBaseIDFromBaseName(airtablebaseName);
+       String url = airTableUrl.replace("baseId", baseId);
 
-        System.out.println("get all data int airtable");
+        ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers()), String.class);
+        if (response.getBody() == null) {
+            return ResponseEntity.status(HttpStatus.NO_CONTENT).body("No records found in Airtable.");
+        } else {
+            return restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers()), String.class);
 
-        //  ResponseEntity<String> productList = airtableService.getAllRecords();
+        }
+    }
 
-		 return restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers()), String.class);
-		 
-	}
-	
+    public String getBaseIDFromBaseName(String baseName) throws MEDEBVCustomException {
+        String baseurl = airTableBaseUrl;
+        HttpHeaders headers = headers();
+        HttpEntity<String> entity = new HttpEntity<>(headers);
+        try {
+            ResponseEntity<AirtableBaseResponse> response = restTemplate.exchange(baseurl, HttpMethod.GET, entity, AirtableBaseResponse.class);
+
+            if (response.getBody() == null) {
+                throw new MEDEBVCustomException("No bases found in Airtable.", HttpStatus.NOT_FOUND);
+            }
+            for (Base base : response.getBody().getBases()) {
+                if (base.getName().equalsIgnoreCase(baseName)) {
+                    return base.getId();
+                }
+            }
+            throw new MEDEBVCustomException("Base name not found: " + baseName, HttpStatus.NOT_FOUND);
+        } catch (Exception e) {
+            LOGGER.error("Error while fetching base ID: " + e.getMessage(),e);
+            throw new MEDEBVCustomException("Error while fetching base ID: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+
+    }
 }
