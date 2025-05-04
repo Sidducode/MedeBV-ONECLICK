@@ -1,5 +1,6 @@
 package com.example.medebv.controller;
 
+import com.example.medebv.exception.MEDEBVCustomException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,7 +25,7 @@ public class AirtableController {
 	@Autowired
 	private  AirtableService airtableService;
 	@GetMapping("/getdetails")
-    public ResponseEntity<String> getAll(@RequestBody MedebvRequest requets) {
+    public ResponseEntity<String> getAll(@RequestBody MedebvRequest requets) throws MEDEBVCustomException {
 		LOGGER.info("Started Scripts");
         return airtableService.getAllRecords(requets);
     }

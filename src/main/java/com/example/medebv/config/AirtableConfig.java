@@ -13,24 +13,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @ConfigurationProperties(prefix = "airtable")
 public class AirtableConfig {
-    public String getBaseId() {
-		return baseId;
-	}
-	public void setBaseId(String baseId) {
-		this.baseId = baseId;
-	}
-	public String getTableName() {
-		return tableName;
-	}
-	public void setTableName(String tableName) {
-		this.tableName = tableName;
-	}
-	public String getToken() {
-		return token;
-	}
-	public void setToken(String token) {
-		this.token = token;
-	}
+
 	private String baseId;
     private String tableName;
     private String token;
