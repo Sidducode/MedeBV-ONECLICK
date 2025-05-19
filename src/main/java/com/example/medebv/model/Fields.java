@@ -39,7 +39,7 @@ public class Fields {
     @JsonProperty("EXTERNALCODE")
     private String externalCode;
 
-    @JsonProperty("EMAIL_ID")
+    @JsonProperty("EMAILID")
     private String emailId;
 
     @JsonProperty("EMAIL_NAME")

@@ -85,7 +85,7 @@ public class AirtableServiceImpl implements AirtableService {
         return new MedeBVResponse(errorResponseList, HttpStatus.OK);
     }
 public void readAirtableData(List<Table> tableList, String url) throws MEDEBVCustomException {
-        List<String> errorResponseList = new ArrayList<>();
+    //    List<String> errorResponseList = new ArrayList<>();
         for (Table table : tableList) {
             String tableName = table.getName();
             switch (tableName){
@@ -95,11 +95,15 @@ public void readAirtableData(List<Table> tableList, String url) throws MEDEBVCus
                 case "ADMIN_CODES":
                      getAllAdminCodesDetails(url+tableName);
                     break;
+                case "EMAIL_TEMPLATES":
+                    getAllEmailTemplatesDetails(url+tableName);
+                    break;
                 default:
                     break;
             }
         }
     }
+
 
     private void getAllProductDetails(String url) throws MEDEBVCustomException {
         StringBuilder sqlBuilder = new StringBuilder();
@@ -160,12 +164,40 @@ public void readAirtableData(List<Table> tableList, String url) throws MEDEBVCus
             throw new MEDEBVCustomException("Error saving SQL file:" + e.getMessage(), HttpStatus.BAD_REQUEST);
         }
     }
+
+    private void getAllEmailTemplatesDetails(String url) throws MEDEBVCustomException {
+        StringBuilder sqlBuilder = new StringBuilder();
+        sqlBuilder.append("--- EMAIL TEMPLATES TABLE DATA ---\n");
+        List<AirtableRecord> productRecordList = getRecordsFromAirTable(url);
+        productRecordList.forEach(tableData -> {
+            Fields fields = tableData.getFields();
+            if (fields != null) {
+                String sql = String.format(
+                        "MERGE INTO EMAIL_TEMPLATES pr USING dual "
+                                + " ON (pr.EMAIL_NAME = '%s') WHEN NOT MATCHED THEN "
+                                + " INSERT (EMAILID,EMAIL_NAME,EMAIL,EMAIL_TEMPLATE,EMAIL_ATTACHMENTS) VALUES "
+                                + "(EMAILIDSEQUENCE.nextval,'%s', '%s', '%s', '%s');",
+                        fields.getEmailName(),fields.getEmailName(),fields.getEmail(),
+                        fields.getEmailTemplate(),fields.getEmailAttachments());
+                sqlBuilder.append(sql).append("\n");
+            }
+        });
+        sqlBuilder.append("\n");
+
+        try (FileWriter writer = new FileWriter(replicatedFolder + FieldConstants.DEPLOYMENT_DATA_SQL,true)) {
+            writer.write(sqlBuilder.toString());
+            LOGGER.info("SQL queries saved successfully to EMAIL_TEMPLATES.sql");
+        } catch (IOException e) {
+            LOGGER.error(FieldConstants.ERROR_SAVING_SQL_FILE, e.getMessage(), e);
+            throw new MEDEBVCustomException("Error saving SQL file:" + e.getMessage(), HttpStatus.BAD_REQUEST);
+        }
+    }
     public List<AirtableRecord> getRecordsFromAirTable(String url) throws MEDEBVCustomException {
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer patDENjBsu7mvOmQs.cb1cf8b41de5b7f3f0985c34adcbb47d5526cb71852c82666fcc253b1a835c59");
-        HttpEntity<String> entity = new HttpEntity<>(headers);
+//        HttpHeaders headers = new HttpHeaders();
+    //   headers.set("Authorization", "Bearer patDENjBsu7mvOmQs.cb1cf8b41de5b7f3f0985c34adcbb47d5526cb71852c82666fcc253b1a835c59");
+    //    HttpEntity<String> entity = new HttpEntity<>(headers);
         try{
-            ResponseEntity<AirtableResponse> response = restTemplate.exchange(url, HttpMethod.GET, entity, AirtableResponse.class);
+            ResponseEntity<AirtableResponse> response = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers()), AirtableResponse.class);
             return response.getBody()!= null ? response.getBody().getRecords() : List.of();
 
         } catch (Exception e) {
@@ -194,6 +226,5 @@ public void readAirtableData(List<Table> tableList, String url) throws MEDEBVCus
             LOGGER.error("Error while fetching base ID: " + e.getMessage(),e);
             throw new MEDEBVCustomException("Error while fetching base ID: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
-
     }
 }
