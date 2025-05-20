@@ -1,37 +1,242 @@
 version: 2.1
 
+parameters:
+  env:
+    type: string
+    default: dev
+  trunk_branch_name:
+    type: string
+    default: main
+  tst_aws_account_id:
+    type: string
+    default: '841628540994'
+  dev_aws_account_id:
+    type: string
+    default: '713430043072'
+  uat_aws_account_id:
+    type: string
+    default: '440612718145'
+  prd_aws_account_id:
+    type: string
+    default: '895965202724'
+  aws_region:
+    type: string
+    default: us-east-1
+
+orbs:
+  aws-cli: circleci/aws-cli@4.1
+
 executors:
-  maven-executor:
+  exec_common:
     docker:
-      - image: cimg/openjdk:17.0
-    working_directory: ~/repo
+      - image: cimg/base:2023.10
+  java-executor:
+    docker:
+      - image: cimg/openjdk:21.0  # Choose JDK version (e.g., OpenJDK 21)
+  exec_terraform:
+    docker:
+      - image: docker.mirror.hashicorp.services/hashicorp/terraform:1.6.5
+    resource_class: small
+    machine:
 
 jobs:
+  common_setup:
+    executor: exec_common
+    parameters:
+      aws_account_id:
+        type: string
+      role_arn:
+        type: string
+    steps:
+      - checkout
+      - aws-cli/setup:
+          role_arn: << parameters.role_arn >>
+          region: us-east-1
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+          workspace: /workspace/${CIRCLE_JOB}
+  plan:
+    executor: exec_terraform
+    parameters:
+      env:
+        type: string
+      aws_account_id:
+        type: string
+      role_arn:
+        type: string
+    steps:
+      - attach_workspace:
+          at: .
+      - aws-cli/setup:
+          role_arn: << parameters.role_arn >>
+          region: us-east-1
+      - run:
+          name: terraform plan
+          command: |
+            cd infrastructure/iac/terraform;  
+            terraform init -upgrade -backend-config="./envs/<< parameters.env >>/<< parameters.env >>.backend.tfvars"
+            terraform show -json
+            terraform plan -var-file="./envs/<< parameters.env >>/<< parameters.env >>.tfvars"
   build:
-    executor: maven-executor
-    environment:
-      # These env vars should be set securely in CircleCI project settings or contexts
-      AWS_ACCESS_KEY_ID: << pipeline.parameters.AWS_ACCESS_KEY_ID >>
-      AWS_SECRET_ACCESS_KEY: << pipeline.parameters.AWS_SECRET_ACCESS_KEY >>
-      AWS_DEFAULT_REGION: << pipeline.parameters.AWS_DEFAULT_REGION >>
+    parameters:
+      s3_bucket:
+        type: string
+      role_arn:
+        type: string
+    executor: java-executor
+    #    docker:
+    #      - image: cimg/openjdk:21.0  # Use the appropriate Java version
     steps:
+      - attach_workspace:
+          at: .
       - checkout
+      - aws-cli/setup:
+          role_arn: << parameters.role_arn >>
+          region: us-east-1
       - run:
-          name: Maven Clean & Package (skip tests)
-          command: mvn clean package -DskipTests
-
-  test:
-    executor: maven-executor
+          name: Setup Maven dependencies
+          command: mvn dependency:go-offline
+      - run:
+          name: Build the project
+          command: |
+            mvn clean package -Pnative -DskipTests
+      - run:
+          name: Upload JAR to S3
+          command: |
+            aws s3 cp target/medebv-create-pr-0.0.1-SNAPSHOT.jar s3://<< parameters.s3_bucket >>/build-artifacts/medebv-oneclick-lambda.jar
+      - persist_to_workspace:
+          root: .
+          paths:
+            - target/*.jar
+  deploy:
+    executor: exec_terraform
+    parameters:
+      env:
+        type: string
+      aws_account_id:
+        type: string
+      role_arn:
+        type: string
     steps:
-      - checkout
+      - attach_workspace:
+          at: .
+      - aws-cli/setup:
+          role_arn: << parameters.role_arn >>
+          region: us-east-1
       - run:
-          name: Run Tests
-          command: mvn test
+          name: terraform deploy
+          command: >
+            cd infrastructure/iac/terraform; 
+            terraform init -upgrade -backend-config="./envs/<< parameters.env >>/<< parameters.env >>.backend.tfvars";
+            terraform apply -var-file="./envs/<< parameters.env >>/<< parameters.env >>.tfvars" -auto-approve;            
 
 workflows:
-  build_and_test:
+  DEV_PROMOTE:
     jobs:
-      - build
-      - test:
+      - common_setup:
+          name: &dev_setup 'Setting up AWS Environment on Deploy Machine for DEV'
+          aws_account_id: << pipeline.parameters.dev_aws_account_id >>
+          role_arn: arn:aws:iam::<< pipeline.parameters.dev_aws_account_id >>:role/circleci/medebv-oneclick-circleci-role
+      - build:
+          name: &dev_build 'Running build for MedeBV OneClick'
+          s3_bucket: cmtx-dev111-medebv-oneclick-deploy
+          role_arn: arn:aws:iam::<< pipeline.parameters.dev_aws_account_id >>:role/circleci/medebv-oneclick-circleci-role
           requires:
-            - build
+            - *dev_setup
+      - plan:
+          name: &dev_plan 'Running TF Plan on DEV'
+          env: 'dev'
+          aws_account_id: << pipeline.parameters.dev_aws_account_id >>
+          role_arn: arn:aws:iam::<< pipeline.parameters.dev_aws_account_id >>:role/circleci/medebv-oneclick-circleci-role
+          requires:
+            - *dev_build
+      - deploy:
+          name: &dev_deploy 'Running deploy on DEV'
+          env: 'dev'
+          aws_account_id: << pipeline.parameters.dev_aws_account_id >>
+          role_arn: arn:aws:iam::<< pipeline.parameters.dev_aws_account_id >>:role/circleci/medebv-oneclick-circleci-role
+          requires:
+            - *dev_plan
+
+  # TST_PROMOTE:
+  #   jobs:
+  #     - common_setup:
+  #         name: &tst_setup 'Setting up AWS Environment on Deploy Machine for TEST'
+  #         aws_account_id: << pipeline.parameters.tst_aws_account_id >>
+  #         role_arn: arn:aws:iam::<< pipeline.parameters.tst_aws_account_id >>:role/circleci/medebv-oneclick-circleci-role
+  #     - build:
+  #         name: &tst_build 'Running build for MedeBV OneClick'
+  #         s3_bucket: cmtx-tst101-medebv-oneclick-deploy
+  #         role_arn: arn:aws:iam::<< pipeline.parameters.tst_aws_account_id >>:role/circleci/medebv-oneclick-circleci-role
+  #         requires:
+  #           - *tst_setup
+  #     - plan:
+  #         name: &tst_plan 'Running TF Plan on TEST'
+  #         env: 'tst'
+  #         aws_account_id: << pipeline.parameters.tst_aws_account_id >>
+  #         role_arn: arn:aws:iam::<< pipeline.parameters.tst_aws_account_id >>:role/circleci/medebv-oneclick-circleci-role
+  #         requires:
+  #           - *tst_build
+  #     - deploy:
+  #         name: &tst_deploy 'Running deploy on TEST'
+  #         env: 'tst'
+  #         aws_account_id: << pipeline.parameters.tst_aws_account_id >>
+  #         role_arn: arn:aws:iam::<< pipeline.parameters.tst_aws_account_id >>:role/circleci/medebv-oneclick-circleci-role
+  #         requires:
+  #           - *tst_plan
+
+  # UAT_PROMOTE:
+  #   jobs:
+  #     - common_setup:
+  #         name: &uat_setup 'Setting up AWS Environment on Deploy Machine for UAT'
+  #         aws_account_id: << pipeline.parameters.uat_aws_account_id >>
+  #         role_arn: arn:aws:iam::<< pipeline.parameters.uat_aws_account_id >>:role/circleci/medebv-oneclick-circleci-role
+  #     - build:
+  #         name: &uat_build 'Running build for MedeBV OneClick'
+  #         s3_bucket: cmtx-uat113-medebv-oneclick-deploy
+  #         role_arn: arn:aws:iam::<< pipeline.parameters.uat_aws_account_id >>:role/circleci/medebv-oneclick-circleci-role
+  #         requires:
+  #           - *uat_setup
+  #     - plan:
+  #         name: &uat_plan 'Running TF Plan on UAT'
+  #         env: 'uat'
+  #         aws_account_id: << pipeline.parameters.uat_aws_account_id >>
+  #         role_arn: arn:aws:iam::<< pipeline.parameters.uat_aws_account_id >>:role/circleci/medebv-oneclick-circleci-role
+  #         requires:
+  #           - *uat_build
+  #     - deploy:
+  #         name: &uat_deploy 'Running deploy on UAT'
+  #         env: 'uat'
+  #         aws_account_id: << pipeline.parameters.uat_aws_account_id >>
+  #         role_arn: arn:aws:iam::<< pipeline.parameters.uat_aws_account_id >>:role/circleci/medebv-oneclick-circleci-role
+  #         requires:
+  #           - *uat_plan
+
+  # PROD_PROMOTE:
+  #   jobs:
+  #     - common_setup:
+  #         name: &prd_setup 'Setting up AWS Environment on Deploy Machine for PROD'
+  #         aws_account_id: << pipeline.parameters.prd_aws_account_id >>
+  #         role_arn: arn:aws:iam::<< pipeline.parameters.prd_aws_account_id >>:role/circleci/medebv-oneclick-circleci-role
+  #     - build:
+  #         name: &prd_build 'Running build for MedeBV OneClick'
+  #         s3_bucket: cmtx-prd114-medebv-oneclick-deploy
+  #         role_arn: arn:aws:iam::<< pipeline.parameters.prd_aws_account_id >>:role/circleci/medebv-oneclick-circleci-role
+  #         requires:
+  #           - *prd_setup
+  #     - plan:
+  #         name: &prd_plan 'Running TF Plan on PROD'
+  #         env: 'prd'
+  #         aws_account_id: << pipeline.parameters.prd_aws_account_id >>
+  #         role_arn: arn:aws:iam::<< pipeline.parameters.prd_aws_account_id >>:role/circleci/medebv-oneclick-circleci-role
+  #         requires:
+  #           - *prd_build
+  #     - deploy:
+  #         name: &prd_deploy 'Running deploy on PROD'
+  #         env: 'prd'
+  #         aws_account_id: << pipeline.parameters.prd_aws_account_id >>
+  #         role_arn: arn:aws:iam::<< pipeline.parameters.prd_aws_account_id >>:role/circleci/medebv-oneclick-circleci-role
+  #         requires:
+  #           - *prd_plan 
