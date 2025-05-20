@@ -1,0 +1,37 @@
+version: 2.1
+
+executors:
+  maven-executor:
+    docker:
+      - image: cimg/openjdk:17.0
+    working_directory: ~/repo
+
+jobs:
+  build:
+    executor: maven-executor
+    environment:
+      # These env vars should be set securely in CircleCI project settings or contexts
+      AWS_ACCESS_KEY_ID: << pipeline.parameters.AWS_ACCESS_KEY_ID >>
+      AWS_SECRET_ACCESS_KEY: << pipeline.parameters.AWS_SECRET_ACCESS_KEY >>
+      AWS_DEFAULT_REGION: << pipeline.parameters.AWS_DEFAULT_REGION >>
+    steps:
+      - checkout
+      - run:
+          name: Maven Clean & Package (skip tests)
+          command: mvn clean package -DskipTests
+
+  test:
+    executor: maven-executor
+    steps:
+      - checkout
+      - run:
+          name: Run Tests
+          command: mvn test
+
+workflows:
+  build_and_test:
+    jobs:
+      - build
+      - test:
+          requires:
+            - build
